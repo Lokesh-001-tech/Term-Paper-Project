@@ -76,7 +76,10 @@ transform = transforms.Compose([
 
 image = Image.open(input_path).convert("RGB")
 
-print("Original image size:", image.size)
+# Store original dimensions
+original_size = image.size
+
+print("Original image size:", original_size)
 
 
 # --------------------------------------------------
@@ -113,7 +116,19 @@ restored_image = transforms.ToPILImage()(restored_image)
 
 
 # --------------------------------------------------
-# 9. Save restored image
+# 9. Restore original image dimensions
+# --------------------------------------------------
+
+restored_image = restored_image.resize(
+    original_size,
+    Image.Resampling.LANCZOS
+)
+
+print("Restored image size:", restored_image.size)
+
+
+# --------------------------------------------------
+# 10. Save restored image
 # --------------------------------------------------
 
 restored_image.save(output_path)
