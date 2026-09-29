@@ -22,7 +22,7 @@ print("Using device:", device)
 input_path = os.path.join(
     "test_data",
     "challenging-60",
-    "2.png"
+    "52.png"
 )
 
 model_path = os.path.join(
@@ -36,7 +36,7 @@ os.makedirs(output_dir, exist_ok=True)
 
 output_path = os.path.join(
     output_dir,
-    "2_restored.png"
+    "52_restored.png"
 )
 
 
