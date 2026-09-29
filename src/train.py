@@ -5,9 +5,9 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from dataset import list_pairs, split_names, UnderwaterDataset
+from dataset import list_pairs, UnderwaterDataset
 from model import UnderwaterRestorationModel
-from losses import CombinedLoss, psnr, ssim
+from losses import CombinedLoss
 
 
 # ------------------------------------------------------------
@@ -20,10 +20,11 @@ MODEL_PATH = os.path.join("models", "underwater_restoration.pth")
 LAST_MODEL_PATH = os.path.join("models", "underwater_restoration_last.pth")
 
 IMAGE_SIZE = (256, 256)
+
 EPOCHS = 200
 BATCH_SIZE = 8
 LEARNING_RATE = 2e-4
-VAL_RATIO = 0.1
+
 SEED = 42
 
 
@@ -34,132 +35,219 @@ random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(SEED)
+
+
+# ------------------------------------------------------------
+# Device
+# ------------------------------------------------------------
+device = torch.device(
+    "cuda" if torch.cuda.is_available() else "cpu"
+)
+
 print("Using device:", device)
 
+if torch.cuda.is_available():
+    print("GPU:", torch.cuda.get_device_name(0))
+
 
 # ------------------------------------------------------------
-# Data (train/validation split + augmentation on training only)
+# Dataset
 # ------------------------------------------------------------
-names = list_pairs(RAW_DIR, REFERENCE_DIR)
-train_names, val_names = split_names(names, VAL_RATIO, SEED)
+# IMPORTANT:
+# All 890 paired images are used for training.
+# There is NO train/validation split.
+# challenging-60 is kept completely separate and is used
+# only during inference.
+# ------------------------------------------------------------
+
+names = list_pairs(
+    RAW_DIR,
+    REFERENCE_DIR
+)
+
+print("Total paired images:", len(names))
+
 
 train_set = UnderwaterDataset(
-    RAW_DIR, REFERENCE_DIR, train_names, IMAGE_SIZE, augment=True
-)
-val_set = UnderwaterDataset(
-    RAW_DIR, REFERENCE_DIR, val_names, IMAGE_SIZE, augment=False
+    RAW_DIR,
+    REFERENCE_DIR,
+    names,
+    IMAGE_SIZE,
+    augment=True
 )
 
-train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True)
-val_loader = DataLoader(val_set, batch_size=BATCH_SIZE, shuffle=False)
+
+train_loader = DataLoader(
+    train_set,
+    batch_size=BATCH_SIZE,
+    shuffle=True,
+    num_workers=2,
+    pin_memory=torch.cuda.is_available()
+)
 
 
 # ------------------------------------------------------------
-# Model, loss, optimizer, scheduler
+# Model
 # ------------------------------------------------------------
 model = UnderwaterRestorationModel().to(device)
 
-# The VGG perceptual loss is slow on CPU, so only use it with a GPU
+print(
+    "Total model parameters:",
+    sum(p.numel() for p in model.parameters())
+)
+
+
+# ------------------------------------------------------------
+# Loss
+# ------------------------------------------------------------
 criterion = CombinedLoss(
     ssim_weight=0.2,
     perceptual_weight=0.05,
     use_perceptual=torch.cuda.is_available()
 ).to(device)
 
-optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-    optimizer, T_max=EPOCHS, eta_min=1e-6
+# ------------------------------------------------------------
+# Optimizer
+# ------------------------------------------------------------
+optimizer = torch.optim.Adam(
+    model.parameters(),
+    lr=LEARNING_RATE
 )
 
 
 # ------------------------------------------------------------
-# Validation
+# Learning-rate scheduler
 # ------------------------------------------------------------
-def evaluate(use_model=True):
-    """
-    Average PSNR / SSIM against the reference images.
-    use_model=False measures the RAW image itself (the baseline),
-    so you can see how much the model improves on the original.
-    """
-
-    if use_model:
-        model.eval()
-
-    total_psnr = 0.0
-    total_ssim = 0.0
-    count = 0
-
-    with torch.no_grad():
-        for raw, reference in val_loader:
-
-            raw = raw.to(device)
-            reference = reference.to(device)
-
-            output = model(raw).clamp(0, 1) if use_model else raw
-
-            batch = raw.size(0)
-            total_psnr += psnr(output, reference).item() * batch
-            total_ssim += ssim(output, reference).item() * batch
-            count += batch
-
-    return total_psnr / count, total_ssim / count
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    optimizer,
+    T_max=EPOCHS,
+    eta_min=1e-6
+)
 
 
+# ------------------------------------------------------------
+# Create model directory
+# ------------------------------------------------------------
 os.makedirs("models", exist_ok=True)
 
-base_psnr, base_ssim = evaluate(use_model=False)
-print(f"Baseline (raw image vs reference): "
-      f"PSNR {base_psnr:.2f} dB, SSIM {base_ssim:.4f}\n")
-
 
 # ------------------------------------------------------------
-# Training loop
+# Training
 # ------------------------------------------------------------
-best_psnr = 0.0
+best_loss = float("inf")
+
 
 for epoch in range(EPOCHS):
 
     model.train()
+
     total_loss = 0.0
 
     for raw, reference in train_loader:
 
-        raw = raw.to(device)
-        reference = reference.to(device)
+        raw = raw.to(
+            device,
+            non_blocking=True
+        )
 
+        reference = reference.to(
+            device,
+            non_blocking=True
+        )
+
+        # Clear previous gradients
         optimizer.zero_grad()
 
+        # Forward pass
         output = model(raw)
-        loss = criterion(output, reference)
 
+        # Calculate loss
+        loss = criterion(
+            output,
+            reference
+        )
+
+        # Backpropagation
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
+        # Prevent very large gradients
+        torch.nn.utils.clip_grad_norm_(
+            model.parameters(),
+            max_norm=1.0
+        )
+
+        # Update model weights
         optimizer.step()
 
         total_loss += loss.item()
 
+
+    # Update learning rate
     scheduler.step()
 
-    train_loss = total_loss / len(train_loader)
-    val_psnr, val_ssim = evaluate()
 
+    # Average training loss
+    train_loss = (
+        total_loss / len(train_loader)
+    )
+
+
+    # --------------------------------------------------------
+    # Save best model
+    # --------------------------------------------------------
     marker = ""
-    if val_psnr > best_psnr:
-        best_psnr = val_psnr
-        torch.save(model.state_dict(), MODEL_PATH)
-        marker = "  <- best model saved"
+
+    if train_loss < best_loss:
+
+        best_loss = train_loss
+
+        torch.save(
+            model.state_dict(),
+            MODEL_PATH
+        )
+
+        marker = " <- best model saved"
+
+
+    # Current learning rate
+    current_lr = optimizer.param_groups[0]["lr"]
+
 
     print(
         f"Epoch [{epoch + 1}/{EPOCHS}] "
         f"Loss: {train_loss:.4f} | "
-        f"Val PSNR: {val_psnr:.2f} dB | Val SSIM: {val_ssim:.4f}"
+        f"LR: {current_lr:.7f}"
         f"{marker}"
     )
 
-torch.save(model.state_dict(), LAST_MODEL_PATH)
 
+    # --------------------------------------------------------
+    # Save latest model every epoch
+    # --------------------------------------------------------
+    torch.save(
+        model.state_dict(),
+        LAST_MODEL_PATH
+    )
+
+
+# ------------------------------------------------------------
+# Training completed
+# ------------------------------------------------------------
 print("\nTraining completed.")
-print(f"Baseline PSNR {base_psnr:.2f} dB -> best model PSNR {best_psnr:.2f} dB")
-print("Best model:", MODEL_PATH)
+
+print(
+    f"Best training loss: {best_loss:.4f}"
+)
+
+print(
+    "Best model:",
+    MODEL_PATH
+)
+
+print(
+    "Last model:",
+    LAST_MODEL_PATH
+)
