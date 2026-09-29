@@ -1,77 +1,115 @@
 import os
-from PIL import Image
+import random
 
+import numpy as np
 import torch
+from PIL import Image
 from torch.utils.data import Dataset
-from torchvision import transforms
+
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg")
+
+
+def list_pairs(raw_dir, reference_dir):
+    """Returns filenames that exist in both folders (checks every pair)."""
+
+    names = sorted(
+        file for file in os.listdir(raw_dir)
+        if file.lower().endswith(IMAGE_EXTENSIONS)
+    )
+
+    missing = [
+        name for name in names
+        if not os.path.exists(os.path.join(reference_dir, name))
+    ]
+
+    if missing:
+        raise FileNotFoundError(
+            f"{len(missing)} raw images have no reference image, "
+            f"for example: {missing[:5]}"
+        )
+
+    return names
+
+
+def split_names(names, val_ratio=0.1, seed=42):
+    """Fixed random split so validation images are never trained on."""
+
+    names = list(names)
+    random.Random(seed).shuffle(names)
+
+    val_count = max(1, int(len(names) * val_ratio))
+
+    return names[val_count:], names[:val_count]
+
+
+def load_image(path, image_size):
+    image = Image.open(path).convert("RGB")
+    image = image.resize(image_size, Image.Resampling.LANCZOS)
+    return np.array(image, dtype=np.uint8)
 
 
 class UnderwaterDataset(Dataset):
+    """
+    Loads all images once into memory (as uint8) so training is fast.
+    augment=True applies the SAME random flip / rotation to raw and
+    reference, which effectively multiplies the small dataset.
+    """
 
-    def __init__(self, raw_dir, reference_dir):
+    def __init__(self, raw_dir, reference_dir, names,
+                 image_size=(256, 256), augment=False):
 
-        self.raw_dir = raw_dir
-        self.reference_dir = reference_dir
+        self.augment = augment
 
-        # Get image filenames from raw folder
-        self.image_names = [
-            file for file in os.listdir(raw_dir)
-            if file.lower().endswith((".png", ".jpg", ".jpeg"))
-        ]
+        self.raw_images = []
+        self.reference_images = []
 
-        self.transform = transforms.Compose([
-            transforms.Resize((256, 256)),
-            transforms.ToTensor()
-        ])
+        for name in names:
+            self.raw_images.append(
+                load_image(os.path.join(raw_dir, name), image_size)
+            )
+            self.reference_images.append(
+                load_image(os.path.join(reference_dir, name), image_size)
+            )
+
+        print(f"Loaded {len(names)} image pairs (augment={augment})")
 
     def __len__(self):
-        return len(self.image_names)
+        return len(self.raw_images)
+
+    @staticmethod
+    def _to_tensor(array):
+        return torch.from_numpy(array).permute(2, 0, 1).float() / 255.0
 
     def __getitem__(self, index):
 
-        image_name = self.image_names[index]
+        raw = self._to_tensor(self.raw_images[index])
+        reference = self._to_tensor(self.reference_images[index])
 
-        raw_path = os.path.join(
-            self.raw_dir,
-            image_name
-        )
+        if self.augment:
 
-        reference_path = os.path.join(
-            self.reference_dir,
-            image_name
-        )
+            if random.random() < 0.5:
+                raw = torch.flip(raw, dims=[2])
+                reference = torch.flip(reference, dims=[2])
 
-        # Check whether reference image exists
-        if not os.path.exists(reference_path):
-            raise FileNotFoundError(
-                f"Reference image not found: {image_name}"
-            )
+            if random.random() < 0.5:
+                raw = torch.flip(raw, dims=[1])
+                reference = torch.flip(reference, dims=[1])
 
-        # Open images
-        raw_image = Image.open(raw_path).convert("RGB")
-        reference_image = Image.open(reference_path).convert("RGB")
+            k = random.randint(0, 3)
+            if k:
+                raw = torch.rot90(raw, k, dims=[1, 2])
+                reference = torch.rot90(reference, k, dims=[1, 2])
 
-        # Apply preprocessing
-        raw_image = self.transform(raw_image)
-        reference_image = self.transform(reference_image)
-
-        return raw_image, reference_image
+        return raw, reference
 
 
 if __name__ == "__main__":
 
-    # Paths relative to project root
     raw_dir = os.path.join("data", "raw-890")
     reference_dir = os.path.join("data", "reference-890")
 
-    dataset = UnderwaterDataset(
-        raw_dir,
-        reference_dir
-    )
+    names = list_pairs(raw_dir, reference_dir)
+    print("Number of image pairs:", len(names))
 
-    print("Number of image pairs:", len(dataset))
-
-    raw_image, reference_image = dataset[0]
-
-    print("Raw image shape:", raw_image.shape)
-    print("Reference image shape:", reference_image.shape)
+    train_names, val_names = split_names(names)
+    print("Train:", len(train_names), "Validation:", len(val_names))
