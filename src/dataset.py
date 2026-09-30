@@ -1,6 +1,7 @@
 import os
 import random
 
+import cv2
 import numpy as np
 import torch
 from PIL import Image
@@ -31,17 +32,6 @@ def list_pairs(raw_dir, reference_dir):
     return names
 
 
-def split_names(names, val_ratio=0.1, seed=42):
-    """Fixed random split so validation images are never trained on."""
-
-    names = list(names)
-    random.Random(seed).shuffle(names)
-
-    val_count = max(1, int(len(names) * val_ratio))
-
-    return names[val_count:], names[:val_count]
-
-
 def load_image(path, image_size):
     image = Image.open(path).convert("RGB")
     image = image.resize(image_size, Image.Resampling.LANCZOS)
@@ -51,14 +41,27 @@ def load_image(path, image_size):
 class UnderwaterDataset(Dataset):
     """
     Loads all images once into memory (as uint8) so training is fast.
-    augment=True applies the SAME random flip / rotation to raw and
-    reference, which effectively multiplies the small dataset.
+
+    augment=True  -> the SAME random flip / rotation is applied to the
+                     raw and the reference image.
+
+    degrade=True  -> the RAW image only is randomly blurred and/or made
+                     noisy, while the reference (target) is left clean.
+                     The model therefore learns to remove blur and noise
+                     as well as fix colour. Use it for training only.
     """
 
     def __init__(self, raw_dir, reference_dir, names,
-                 image_size=(256, 256), augment=False):
+                 image_size=(256, 256), augment=False,
+                 degrade=False, blur_prob=0.5, max_blur_sigma=3.0,
+                 noise_prob=0.5, max_noise=5.0):
 
         self.augment = augment
+        self.degrade = degrade
+        self.blur_prob = blur_prob
+        self.max_blur_sigma = max_blur_sigma
+        self.noise_prob = noise_prob
+        self.max_noise = max_noise
 
         self.raw_images = []
         self.reference_images = []
@@ -71,7 +74,10 @@ class UnderwaterDataset(Dataset):
                 load_image(os.path.join(reference_dir, name), image_size)
             )
 
-        print(f"Loaded {len(names)} image pairs (augment={augment})")
+        print(
+            f"Loaded {len(names)} image pairs "
+            f"(augment={augment}, degrade={degrade})"
+        )
 
     def __len__(self):
         return len(self.raw_images)
@@ -80,9 +86,31 @@ class UnderwaterDataset(Dataset):
     def _to_tensor(array):
         return torch.from_numpy(array).permute(2, 0, 1).float() / 255.0
 
+    def _degrade(self, array):
+        """Random blur and noise on the raw image (a fresh random draw
+        every time the image is loaded)."""
+
+        if random.random() < self.blur_prob:
+            sigma = random.uniform(0.5, self.max_blur_sigma)
+            array = cv2.GaussianBlur(array, (0, 0), sigma)
+
+        if random.random() < self.noise_prob:
+            sigma = random.uniform(1.0, self.max_noise)
+            noise = np.random.normal(0, sigma, array.shape)
+            array = np.clip(
+                array.astype(np.float32) + noise, 0, 255
+            ).astype(np.uint8)
+
+        return array
+
     def __getitem__(self, index):
 
-        raw = self._to_tensor(self.raw_images[index])
+        raw_array = self.raw_images[index]
+
+        if self.degrade:
+            raw_array = self._degrade(raw_array)
+
+        raw = self._to_tensor(raw_array)
         reference = self._to_tensor(self.reference_images[index])
 
         if self.augment:
@@ -109,7 +137,4 @@ if __name__ == "__main__":
     reference_dir = os.path.join("data", "reference-890")
 
     names = list_pairs(raw_dir, reference_dir)
-    print("Number of image pairs:", len(names))
-
-    train_names, val_names = split_names(names)
-    print("Train:", len(train_names), "Validation:", len(val_names))
+    print("Number of image pairs used for training:", len(names))

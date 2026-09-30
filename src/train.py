@@ -19,11 +19,24 @@ REFERENCE_DIR = os.path.join("data", "reference-890")
 MODEL_PATH = os.path.join("models", "underwater_restoration.pth")
 LAST_MODEL_PATH = os.path.join("models", "underwater_restoration_last.pth")
 
+# Optional: start from an already trained model instead of from scratch.
+# Set to MODEL_PATH to fine-tune your current model with the new losses
+# and blur/noise augmentation (needs fewer epochs, e.g. 80-100).
+# Leave as None to train from scratch.
+INIT_FROM = None
+
+# If you change this, change MODEL_SIZE in inference.py to the same value.
 IMAGE_SIZE = (256, 256)
 
 EPOCHS = 200
 BATCH_SIZE = 8
 LEARNING_RATE = 2e-4
+
+# Random blur / noise added to the RAW training image only
+BLUR_PROB = 0.5
+MAX_BLUR_SIGMA = 3.0
+NOISE_PROB = 0.5
+MAX_NOISE = 5.0
 
 SEED = 42
 
@@ -75,7 +88,12 @@ train_set = UnderwaterDataset(
     REFERENCE_DIR,
     names,
     IMAGE_SIZE,
-    augment=True
+    augment=True,
+    degrade=True,
+    blur_prob=BLUR_PROB,
+    max_blur_sigma=MAX_BLUR_SIGMA,
+    noise_prob=NOISE_PROB,
+    max_noise=MAX_NOISE
 )
 
 
@@ -93,6 +111,10 @@ train_loader = DataLoader(
 # ------------------------------------------------------------
 model = UnderwaterRestorationModel().to(device)
 
+if INIT_FROM is not None:
+    model.load_state_dict(torch.load(INIT_FROM, map_location=device))
+    print("Starting from trained model:", INIT_FROM)
+
 print(
     "Total model parameters:",
     sum(p.numel() for p in model.parameters())
@@ -105,6 +127,8 @@ print(
 criterion = CombinedLoss(
     ssim_weight=0.2,
     perceptual_weight=0.05,
+    edge_weight=0.3,
+    color_weight=0.2,
     use_perceptual=torch.cuda.is_available()
 ).to(device)
 

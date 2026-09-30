@@ -48,6 +48,48 @@ def psnr(img1, img2):
 
 
 # ------------------------------------------------------------
+# Edge (gradient) loss - rewards sharp edges
+# ------------------------------------------------------------
+def edge_loss(output, target):
+    """L1 difference between Sobel gradients of output and target."""
+
+    channels = output.shape[1]
+
+    kernel_x = torch.tensor(
+        [[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]],
+        dtype=output.dtype, device=output.device
+    ).view(1, 1, 3, 3).repeat(channels, 1, 1, 1)
+
+    kernel_y = kernel_x.transpose(2, 3)
+
+    def gradients(image):
+        gx = F.conv2d(image, kernel_x, padding=1, groups=channels)
+        gy = F.conv2d(image, kernel_y, padding=1, groups=channels)
+        return gx, gy
+
+    out_x, out_y = gradients(output)
+    tgt_x, tgt_y = gradients(target)
+
+    return F.l1_loss(out_x, tgt_x) + F.l1_loss(out_y, tgt_y)
+
+
+# ------------------------------------------------------------
+# Colour loss - matches each channel's average level and contrast
+# ------------------------------------------------------------
+def color_loss(output, target):
+    """
+    Forces the R, G, B channels to have the same overall brightness
+    (mean) and contrast (std) as the reference. This fixes the
+    under-corrected red channel.
+    """
+
+    mean_loss = F.l1_loss(output.mean(dim=(2, 3)), target.mean(dim=(2, 3)))
+    std_loss = F.l1_loss(output.std(dim=(2, 3)), target.std(dim=(2, 3)))
+
+    return mean_loss + std_loss
+
+
+# ------------------------------------------------------------
 # Perceptual loss (VGG16 features) - restores texture and sharpness
 # ------------------------------------------------------------
 class VGGPerceptualLoss(nn.Module):
@@ -84,19 +126,28 @@ class VGGPerceptualLoss(nn.Module):
 # ------------------------------------------------------------
 class CombinedLoss(nn.Module):
     """
-    total = L1 + ssim_weight * (1 - SSIM) + perceptual_weight * VGG loss
+    total = L1
+          + ssim_weight       * (1 - SSIM)
+          + edge_weight       * edge (gradient) loss
+          + color_weight      * colour (channel mean/std) loss
+          + perceptual_weight * VGG perceptual loss
 
     L1         -> accurate colours and brightness
     SSIM       -> preserves structure
-    Perceptual -> sharper, more natural textures
+    Edge       -> sharper edges (deblurring)
+    Colour     -> fully restores the red channel and contrast
+    Perceptual -> natural textures (needs a GPU)
     """
 
     def __init__(self, ssim_weight=0.2, perceptual_weight=0.05,
+                 edge_weight=0.3, color_weight=0.2,
                  use_perceptual=True):
         super(CombinedLoss, self).__init__()
 
         self.ssim_weight = ssim_weight
         self.perceptual_weight = perceptual_weight
+        self.edge_weight = edge_weight
+        self.color_weight = color_weight
 
         self.perceptual = None
 
@@ -114,6 +165,10 @@ class CombinedLoss(nn.Module):
         loss = loss + self.ssim_weight * (
             1 - ssim(output.clamp(0, 1), target)
         )
+
+        loss = loss + self.edge_weight * edge_loss(output, target)
+
+        loss = loss + self.color_weight * color_loss(output, target)
 
         if self.perceptual is not None:
             loss = loss + self.perceptual_weight * self.perceptual(
