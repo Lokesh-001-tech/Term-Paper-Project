@@ -83,7 +83,7 @@ train_loader = DataLoader(
     train_set,
     batch_size=BATCH_SIZE,
     shuffle=True,
-    num_workers=2,
+    num_workers=0,
     pin_memory=torch.cuda.is_available()
 )
 
