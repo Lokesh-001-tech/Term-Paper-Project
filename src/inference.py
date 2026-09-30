@@ -38,14 +38,10 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
-if args.images:
-    image_names = args.images
-else:
-    image_names = sorted(
-        f for f in os.listdir(INPUT_DIR)
-        if f.lower().endswith((".png", ".jpg", ".jpeg"))
-    )
+if not args.images:
+    parser.error("Give at least one image name, e.g. python src\\inference.py 34.png")
 
+image_names = args.images
 
 # --------------------------------------------------
 # Load model
