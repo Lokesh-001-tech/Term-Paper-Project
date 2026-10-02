@@ -47,7 +47,6 @@ image_names = args.images
 # Load model
 # --------------------------------------------------
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print("Using device:", device)
 
 model = UnderwaterRestorationModel()
 model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
