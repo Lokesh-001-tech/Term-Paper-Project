@@ -1,0 +1,7 @@
+# Generated restoration outputs
+outputs/
+results/
+
+# Python cache
+__pycache__/
+*.pyc

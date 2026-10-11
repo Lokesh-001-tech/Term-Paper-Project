@@ -1,0 +1,105 @@
+Existing Work (From Given PDF – Hybrid Approach)
+┌─────────────────────────────┐
+│ Raw Underwater Image (RGB)  │
+└──────────────
+┬
+──────────────┘
+               ↓
+┌─────────────────────────────┐
+│ CNN Regression Network      │
+│ • Feature extraction        │
+│ • Learns degradation        │
+└──────────────
+┬
+──────────────┘
+               ↓
+┌─────────────────────────────┐
+│ Parameter Prediction        │
+│ • cci (color correction)    │
+│ • γ (gamma)                 │
+│ • α (brightness)            │
+│ • β (contrast)              │
+└──────────────
+┬
+──────────────┘
+               ↓
+┌─────────────────────────────┐
+│ Handcrafted Enhancement     │
+│ • Color correction          │
+│ • Gamma correction          │
+│ • CLAHE                     │
+│ • Fusion                    │
+│ • Brightness & contrast     │
+└──────────────
+┬
+──────────────┘
+               ↓
+┌─────────────────────────────┐
+│ Enhanced Underwater Image   │
+└─────────────────────────────┘
+🔴
+ Key Characteristics
+CNN 
+does NOT output image
+Depends on 
+classical image processing
+Manual parameter labeling required
+Hybrid (not end-to-end)
+🟩
+ Proposed Work (End-to-End Deep Learning Approach)
+┌─────────────────────────────┐
+│ Raw Underwater Image (RGB)  │
+└──────────────
+┬
+──────────────┘
+               ↓
+┌─────────────────────────────┐
+│ Image Preprocessing         │
+│ • Resize                    │
+│ • Normalization             │
+└──────────────
+┬
+──────────────┘
+               ↓
+┌─────────────────────────────┐
+│ Feature Extraction CNN      │
+│ • Multi-scale convolutions  │
+│ • BatchNorm + ReLU          │
+└──────────────
+┬
+──────────────┘
+               ↓
+┌─────────────────────────────┐
+│ Attention Mechanism         │
+│ • Channel attention         │
+│ • Spatial attention         │
+└──────────────
+┬
+──────────────┘
+               ↓
+┌─────────────────────────────┐
+│ Image Reconstruction CNN    │
+│ • Decoder / Upsampling      │
+│ • Feature fusion            │
+└──────────────
+┬
+──────────────┘
+               ↓
+┌─────────────────────────────┐
+│ Enhanced Underwater Image   │
+│ (Direct CNN Output)         │
+└──────────────
+┬
+──────────────┘
+               ↓
+┌─────────────────────────────┐
+│ Loss Computation            │
+│ • L1 / L2 loss              │
+│ • SSIM loss                 │
+└──────────────
+┬
+──────────────┘
+               ↓
+┌─────────────────────────────┐
+│ Backpropagation & Training  │
+└─────────────────────────────┘

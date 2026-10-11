@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Underwater Image Restoration</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; color: #333; margin: 0; padding: 20px; }
+        .container { max-width: 900px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { color: #0056b3; text-align: center; }
+        .upload-area { border: 2px dashed #0056b3; padding: 20px; text-align: center; border-radius: 8px; margin-bottom: 20px; cursor: pointer; }
+        .upload-area:hover { background-color: #f0f8ff; }
+        #file-input { display: none; }
+        .options { margin-bottom: 20px; }
+        .btn { background-color: #0056b3; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 16px; width: 100%; }
+        .btn:hover { background-color: #004494; }
+        .btn:disabled { background-color: #cccccc; cursor: not-allowed; }
+        .comparison-container { display: flex; gap: 20px; margin-top: 30px; }
+        .image-box { flex: 1; text-align: center; }
+        .image-box img { max-width: 100%; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: none; }
+        .loader { display: none; text-align: center; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🌊 Underwater Image Restoration</h1>
+        <p style="text-align:center;">Upload a raw underwater image to enhance its quality, colors, and contrast.</p>
+
+        <div class="upload-area" onclick="document.getElementById('file-input').click()">
+            <p>Click here to select an image</p>
+            <input type="file" id="file-input" accept="image/*" onchange="previewImage(event)">
+        </div>
+
+        <div class="options">
+            <input type="checkbox" id="apply-clahe">
+            <label for="apply-clahe">Apply CLAHE Contrast Boost</label>
+        </div>
+
+        <button class="btn" id="restore-btn" onclick="restoreImage()" disabled>Restore Image</button>
+
+        <div class="loader" id="loader">Processing image... Please wait.</div>
+
+        <div class="comparison-container">
+            <div class="image-box">
+                <h3>Original Image</h3>
+                <img id="original-img" src="" alt="Original">
+            </div>
+            <div class="image-box">
+                <h3>Restored Image</h3>
+                <img id="restored-img" src="" alt="Restored">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let selectedFile = null;
+
+        function previewImage(event) {
+            const file = event.target.files[0];
+            if (file) {
+                selectedFile = file;
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const img = document.getElementById('original-img');
+                    img.src = e.target.result;
+                    img.style.display = 'block';
+                    document.getElementById('restored-img').style.display = 'none';
+                    document.getElementById('restore-btn').disabled = false;
+                }
+                reader.readAsDataURL(file);
+            }
+        }
+
+        async function restoreImage() {
+            if (!selectedFile) return;
+
+            const applyClahe = document.getElementById('apply-clahe').checked;
+            const btn = document.getElementById('restore-btn');
+            const loader = document.getElementById('loader');
+            const restoredImg = document.getElementById('restored-img');
+
+            btn.disabled = true;
+            loader.style.display = 'block';
+            restoredImg.style.display = 'none';
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+            formData.append('apply_clahe', applyClahe);
+
+            try {
+                const response = await fetch('/api/restore', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const objectURL = URL.createObjectURL(blob);
+                    restoredImg.src = objectURL;
+                    restoredImg.style.display = 'block';
+                } else {
+                    alert("Error processing image.");
+                }
+            } catch (error) {
+                alert("Network error: " + error.message);
+            } finally {
+                btn.disabled = false;
+                loader.style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>
